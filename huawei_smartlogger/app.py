@@ -1,15 +1,14 @@
 import json
 import logging
 import os
-import re
 import time
-from pathlib import Path
 from typing import Any
 
 import paho.mqtt.client as mqtt
 from pymodbus.client import ModbusTcpClient
 from pymodbus.exceptions import ModbusException
 
+from addon_options import AddonOptions, load_options
 from mqtt_service import get_mqtt_service_config
 from core import (
     ALARMS,
@@ -19,7 +18,6 @@ from core import (
     alarm_is_active,
     decode_register,
     register_groups,
-    validate_slave_id,
 )
 
 
@@ -29,75 +27,87 @@ MODBUS_TIMEOUT = 5
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant")
 
 
-def load_options() -> tuple[str, int, int, int]:
-    with Path("/data/options.json").open(encoding="utf-8") as options_file:
-        options = json.load(options_file)
+@dataclass(frozen=True)
+class AddonOptions:
+    modbus_host: str
+    modbus_port: int
+    modbus_slave_id: int
+    scan_interval: int
+    mqtt_host: str
+    mqtt_port: int
+    mqtt_username: str
+    mqtt_password: str
+    mqtt_ssl: bool
+    mqtt_topic_prefix: str
+    instance_id: str
 
-    host = options.get("modbus_host")
-    port = options.get("modbus_port")
-    slave_id = validate_slave_id(options.get("modbus_slave_id", 0))
-    scan_interval = options.get("scan_interval")
-    if not isinstance(host, str) or not host.strip():
-        raise ValueError("Set modbus_host to the SmartLogger's IP address or hostname.")
-    if not isinstance(port, int) or not 1 <= port <= 65535:
-        raise ValueError("modbus_port must be between 1 and 65535.")
-    if not isinstance(scan_interval, int) or not 5 <= scan_interval <= 3600:
-        raise ValueError("scan_interval must be between 5 and 3600 seconds.")
-    return host.strip(), port, slave_id, scan_interval
+    @property
+    def key(self) -> str:
+        return stable_key(self.instance_id)
+
+    @property
+    def availability_topic(self) -> str:
+        return f"{self.mqtt_topic_prefix}/{self.instance_id}/availability"
+
+    @property
+    def state_prefix(self) -> str:
+        return f"{self.mqtt_topic_prefix}/{self.instance_id}/state"
 
 
-def stable_key(host: str) -> str:
-    key = re.sub(r"[^a-z0-9]+", "_", host.lower()).strip("_")
-    return key or "smartlogger"
+def mqtt_client(options: AddonOptions) -> mqtt.Client:
+    username = options.mqtt_username
+    password = options.mqtt_password
+    use_tls = options.mqtt_ssl
+    if not username:
+        service_config = get_mqtt_service_config()
+        username = service_config.username or ""
+        password = service_config.password or ""
+        use_tls = service_config.ssl
 
-
-def mqtt_client(host: str) -> mqtt.Client:
-    config = get_mqtt_service_config()
-
-    key = stable_key(host)
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id=f"smartlogger_{key}",
+        client_id=f"smartlogger_{options.key}",
         protocol=mqtt.MQTTv311,
     )
-    if config.username:
-        client.username_pw_set(config.username, config.password)
-    if config.ssl:
+    if username:
+        client.username_pw_set(username, password)
+    if use_tls:
         client.tls_set()
 
-    availability_topic = f"smartlogger/{key}/availability"
-    client.will_set(availability_topic, payload="offline", qos=1, retain=True)
+    client.will_set(
+        options.availability_topic,
+        payload="offline",
+        qos=1,
+        retain=True,
+    )
     client.on_connect = lambda connected_client, userdata, flags, reason, properties: (
         on_connect(
             connected_client,
-            host,
-            key,
-            availability_topic,
+            options,
             reason,
         )
     )
-    client.connect_async(config.host, config.port, keepalive=60)
+    client.connect_async(options.mqtt_host, options.mqtt_port, keepalive=60)
     client.reconnect_delay_set(min_delay=1, max_delay=30)
     client.loop_start()
     return client
 
 
-def discovery_entities(host: str, key: str, availability_topic: str) -> list[dict[str, Any]]:
+def discovery_entities(options: AddonOptions) -> list[dict[str, Any]]:
     device = {
-        "identifiers": [f"huawei_smartlogger_{key}"],
-        "name": f"Huawei SmartLogger ({host})",
+        "identifiers": [f"huawei_smartlogger_{options.key}"],
+        "name": f"Huawei SmartLogger ({options.modbus_host})",
         "manufacturer": "Huawei",
         "model": MODEL,
     }
-    state_prefix = f"smartlogger/{key}/state"
     entities: list[dict[str, Any]] = []
 
     for register in REGISTERS:
         entity: dict[str, Any] = {
             "name": register.name,
-            "unique_id": f"huawei_smartlogger_{key}_{register.key}",
-            "state_topic": f"{state_prefix}/{register.key}",
-            "availability_topic": availability_topic,
+            "unique_id": f"huawei_smartlogger_{options.key}_{register.key}",
+            "state_topic": f"{options.state_prefix}/{register.key}",
+            "availability_topic": options.availability_topic,
             "device": device,
             "entity_category": "diagnostic"
             if register.key.startswith("alarm_info_")
@@ -126,9 +136,9 @@ def discovery_entities(host: str, key: str, availability_topic: str) -> list[dic
                 "key": alarm.key,
                 "config": {
                     "name": alarm.name,
-                    "unique_id": f"huawei_smartlogger_{key}_{alarm.key}",
-                    "state_topic": f"{state_prefix}/{alarm.key}",
-                    "availability_topic": availability_topic,
+                    "unique_id": f"huawei_smartlogger_{options.key}_{alarm.key}",
+                    "state_topic": f"{options.state_prefix}/{alarm.key}",
+                    "availability_topic": options.availability_topic,
                     "payload_on": "ON",
                     "payload_off": "OFF",
                     "device_class": "problem",
@@ -142,13 +152,11 @@ def discovery_entities(host: str, key: str, availability_topic: str) -> list[dic
 
 def publish_discovery(
     client: mqtt.Client,
-    host: str,
-    key: str,
-    availability_topic: str,
+    options: AddonOptions,
 ) -> None:
-    for entity in discovery_entities(host, key, availability_topic):
+    for entity in discovery_entities(options):
         topic = (
-            f"{DISCOVERY_PREFIX}/{entity['component']}/{key}/"
+            f"{DISCOVERY_PREFIX}/{entity['component']}/{options.key}/"
             f"{entity['key']}/config"
         )
         client.publish(topic, json.dumps(entity["config"]), qos=1, retain=True)
@@ -188,13 +196,10 @@ def read_registers(host: str, port: int, slave_id: int) -> dict[int, int]:
 
 def publish_states(
     client: mqtt.Client,
-    host: str,
-    key: str,
-    availability_topic: str,
+    options: AddonOptions,
     values: dict[int, int],
 ) -> None:
     raw_by_key = {register.key: decode_register(register, values) for register in REGISTERS}
-    state_prefix = f"smartlogger/{key}/state"
 
     for register in REGISTERS:
         value = raw_by_key[register.key]
@@ -205,7 +210,7 @@ def publish_states(
         else:
             state = str(value)
         client.publish(
-            f"{state_prefix}/{register.key}",
+            f"{options.state_prefix}/{register.key}",
             payload=state,
             qos=1,
             retain=True,
@@ -215,13 +220,13 @@ def publish_states(
         alarm_value = int(raw_by_key[alarm.register_key])
         state = "ON" if alarm_is_active(alarm, {alarm.register_key: alarm_value}) else "OFF"
         client.publish(
-            f"{state_prefix}/{alarm.key}",
+            f"{options.state_prefix}/{alarm.key}",
             payload=state,
             qos=1,
             retain=True,
         )
 
-    client.publish(availability_topic, payload="online", qos=1, retain=True)
+    client.publish(options.availability_topic, payload="online", qos=1, retain=True)
 
 
 def run() -> None:
@@ -229,10 +234,8 @@ def run() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    host, port, slave_id, scan_interval = load_options()
-    key = stable_key(host)
-    availability_topic = f"smartlogger/{key}/availability"
-    client = mqtt_client(host)
+    options = load_options()
+    client = mqtt_client(options)
 
     try:
         while True:
@@ -240,18 +243,27 @@ def run() -> None:
                 time.sleep(1)
                 continue
             try:
-                values = read_registers(host, port, slave_id)
-                publish_states(client, host, key, availability_topic, values)
+                values = read_registers(
+                    options.modbus_host,
+                    options.modbus_port,
+                    options.modbus_slave_id,
+                )
+                publish_states(client, options, values)
                 LOGGER.debug(
                     "Published telemetry from %s:%s (Modbus slave ID %s)",
-                    host,
-                    port,
-                    slave_id,
+                    options.modbus_host,
+                    options.modbus_port,
+                    options.modbus_slave_id,
                 )
             except (OSError, TimeoutError, ModbusException, ValueError) as error:
                 LOGGER.warning("SmartLogger read failed: %s", error)
-                client.publish(availability_topic, payload="offline", qos=1, retain=True)
-            time.sleep(scan_interval)
+                client.publish(
+                    options.availability_topic,
+                    payload="offline",
+                    qos=1,
+                    retain=True,
+                )
+            time.sleep(options.scan_interval)
     except KeyboardInterrupt:
         LOGGER.info("Stopping SmartLogger MQTT add-on.")
     finally:
@@ -261,17 +273,20 @@ def run() -> None:
 
 def on_connect(
     client: mqtt.Client,
-    host: str,
-    key: str,
-    availability_topic: str,
+    options: AddonOptions,
     reason_code: mqtt.ReasonCode,
 ) -> None:
     if reason_code.is_failure:
         LOGGER.warning("Could not connect to MQTT broker: %s", reason_code)
         return
     LOGGER.info("Connected to MQTT broker; publishing Home Assistant discovery.")
-    client.publish(availability_topic, payload="offline", qos=1, retain=True)
-    publish_discovery(client, host, key, availability_topic)
+    client.publish(
+        options.availability_topic,
+        payload="offline",
+        qos=1,
+        retain=True,
+    )
+    publish_discovery(client, options)
 
 
 if __name__ == "__main__":

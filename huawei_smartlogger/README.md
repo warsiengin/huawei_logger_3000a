@@ -11,10 +11,15 @@ and protocol defaults are based on
    add-on repository and install **Huawei SmartLogger MQTT**.
 2. Set **Modbus host** to the SmartLogger's reachable IP address or hostname.
    The defaults are port `502`, slave ID `0`, and a `10`-second polling interval.
-3. Ensure the Home Assistant MQTT integration is configured, then start the
-   add-on. It retrieves the broker host, port, credentials, and TLS setting
-   from Home Assistant Supervisor's MQTT service and publishes retained MQTT
-   Discovery configuration and state.
+3. Configure **MQTT broker** and **MQTT port** (defaults `core-mosquitto` and
+   `1883`). Enter both MQTT credentials to override Home Assistant's MQTT
+   credentials, or leave both blank to use credentials and TLS settings from
+   the Home Assistant MQTT service.
+4. Set **MQTT topic prefix** and **Instance ID** to organize MQTT topics and
+   distinguish this SmartLogger from other instances. By default, the instance
+   ID is derived from the Modbus host.
+5. Ensure the Home Assistant MQTT integration is configured, then start the
+   add-on. It publishes retained MQTT Discovery configuration and state.
 
 ## Published entities
 
@@ -49,7 +54,11 @@ conflict (alarm 2 bit 3). Plant status values follow the guide: 1 unlimited,
   Confirm that your SmartLogger firmware uses this address convention before
   deploying.
 - MQTT availability is marked offline on read errors and online after a
-  successful poll. The add-on uses retained MQTT state and discovery messages.
-- Configure the Home Assistant MQTT integration and broker before starting the
-  add-on. It uses the Supervisor `mqtt:need` service to get broker settings;
-  MQTT host and credentials are not add-on environment variables.
+  successful poll. State and availability topics use
+  `<mqtt_topic_prefix>/<instance_id>/...`; Discovery configuration uses the
+  configured Home Assistant MQTT Discovery prefix.
+- Configure the Home Assistant MQTT integration and broker before starting
+  the add-on if you want to reuse its broker credentials. Blank add-on MQTT
+  credentials fall back to the optional Supervisor `mqtt:want` service. For
+  a standalone broker or a Home Assistant setup without an MQTT service,
+  provide both MQTT username and password in the add-on options.
