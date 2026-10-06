@@ -22,7 +22,7 @@ def get_mqtt_service_config() -> MQTTServiceConfig:
     if not supervisor_token:
         raise RuntimeError(
             "SUPERVISOR_TOKEN is unavailable. Run this add-on inside Home Assistant "
-            "and keep the mqtt:need service enabled."
+            "or provide MQTT credentials in the add-on options."
         )
 
     request = Request(

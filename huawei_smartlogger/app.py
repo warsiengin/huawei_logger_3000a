@@ -27,33 +27,6 @@ MODBUS_TIMEOUT = 5
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant")
 
 
-@dataclass(frozen=True)
-class AddonOptions:
-    modbus_host: str
-    modbus_port: int
-    modbus_slave_id: int
-    scan_interval: int
-    mqtt_host: str
-    mqtt_port: int
-    mqtt_username: str
-    mqtt_password: str
-    mqtt_ssl: bool
-    mqtt_topic_prefix: str
-    instance_id: str
-
-    @property
-    def key(self) -> str:
-        return stable_key(self.instance_id)
-
-    @property
-    def availability_topic(self) -> str:
-        return f"{self.mqtt_topic_prefix}/{self.instance_id}/availability"
-
-    @property
-    def state_prefix(self) -> str:
-        return f"{self.mqtt_topic_prefix}/{self.instance_id}/state"
-
-
 def mqtt_client(options: AddonOptions) -> mqtt.Client:
     username = options.mqtt_username
     password = options.mqtt_password
