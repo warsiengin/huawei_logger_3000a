@@ -1,5 +1,5 @@
 name: Huawei SmartLogger MQTT
-version: 1.0.0
+version: 1.0.1
 slug: huawei_smartlogger_mqtt
 description: Read Huawei SmartLogger telemetry over Modbus TCP and publish Home Assistant MQTT entities.
 url: https://github.com/warsiengin/huawei_logger_3000a
@@ -17,8 +17,10 @@ services:
 options:
   modbus_host: ""
   modbus_port: 502
+  modbus_slave_id: 0
   scan_interval: 10
 schema:
   modbus_host: str
   modbus_port: port
+  modbus_slave_id: int(0,247)
   scan_interval: int(5,3600)

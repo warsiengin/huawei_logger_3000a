@@ -10,10 +10,11 @@ and protocol defaults are based on
 1. Add `https://github.com/warsiengin/huawei_logger_3000a` as a Home Assistant
    add-on repository and install **Huawei SmartLogger MQTT**.
 2. Set **Modbus host** to the SmartLogger's reachable IP address or hostname.
-   The defaults are port `502` and a `10`-second polling interval.
+   The defaults are port `502`, slave ID `0`, and a `10`-second polling interval.
 3. Ensure the Home Assistant MQTT integration is configured, then start the
-   add-on. It uses the MQTT service provided by Home Assistant and publishes
-   retained MQTT Discovery configuration and state.
+   add-on. It retrieves the broker host, port, credentials, and TLS setting
+   from Home Assistant Supervisor's MQTT service and publishes retained MQTT
+   Discovery configuration and state.
 
 ## Published entities
 
@@ -37,7 +38,8 @@ conflict (alarm 2 bit 3). Plant status values follow the guide: 1 unlimited,
 
 ## Protocol and safety
 
-- Modbus TCP, port `502`, holding-register function `0x03`, unit ID `0`.
+- Modbus TCP, port `502`, holding-register function `0x03`, selectable unit ID
+  `0`-`247` (default `0`, as specified by the guide).
 - Register values are decoded big-endian. Multi-register 32-bit values are
   requested in a single contiguous read and scaled by dividing by the listed
   gain, as specified in the guide.
@@ -48,3 +50,6 @@ conflict (alarm 2 bit 3). Plant status values follow the guide: 1 unlimited,
   deploying.
 - MQTT availability is marked offline on read errors and online after a
   successful poll. The add-on uses retained MQTT state and discovery messages.
+- Configure the Home Assistant MQTT integration and broker before starting the
+  add-on. It uses the Supervisor `mqtt:need` service to get broker settings;
+  MQTT host and credentials are not add-on environment variables.

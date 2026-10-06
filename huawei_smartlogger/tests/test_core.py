@@ -7,6 +7,7 @@ from core import (
     alarm_is_active,
     decode_register,
     register_groups,
+    validate_slave_id,
 )
 
 
@@ -48,6 +49,15 @@ class RegisterDecodingTests(unittest.TestCase):
         for register in REGISTERS:
             self.assertGreaterEqual(register.address, 0)
             self.assertLessEqual(register.address + register.words - 1, 0xFFFF)
+
+    def test_slave_id_accepts_default_and_broadcast_boundary(self) -> None:
+        self.assertEqual(validate_slave_id(0), 0)
+        self.assertEqual(validate_slave_id(247), 247)
+
+    def test_slave_id_rejects_out_of_range_and_non_integer_values(self) -> None:
+        for value in (-1, 248, True, "1", None):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_slave_id(value)
 
 
 if __name__ == "__main__":

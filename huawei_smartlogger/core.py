@@ -126,6 +126,13 @@ PLANT_STATUS = {
 }
 
 
+def validate_slave_id(value: object) -> int:
+    """Validate a Modbus unit identifier in the standard 0-247 range."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 247:
+        raise ValueError("modbus_slave_id must be an integer between 0 and 247.")
+    return value
+
+
 def register_groups(registers: Sequence[Register] = REGISTERS) -> list[tuple[int, int]]:
     """Return contiguous (start address, word count) holding-register reads."""
     ranges = sorted(

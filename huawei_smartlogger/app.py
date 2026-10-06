@@ -10,6 +10,7 @@ import paho.mqtt.client as mqtt
 from pymodbus.client import ModbusTcpClient
 from pymodbus.exceptions import ModbusException
 
+from mqtt_service import get_mqtt_service_config
 from core import (
     ALARMS,
     PLANT_STATUS,
@@ -18,6 +19,7 @@ from core import (
     alarm_is_active,
     decode_register,
     register_groups,
+    validate_slave_id,
 )
 
 
@@ -27,12 +29,13 @@ MODBUS_TIMEOUT = 5
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant")
 
 
-def load_options() -> tuple[str, int, int]:
+def load_options() -> tuple[str, int, int, int]:
     with Path("/data/options.json").open(encoding="utf-8") as options_file:
         options = json.load(options_file)
 
     host = options.get("modbus_host")
     port = options.get("modbus_port")
+    slave_id = validate_slave_id(options.get("modbus_slave_id", 0))
     scan_interval = options.get("scan_interval")
     if not isinstance(host, str) or not host.strip():
         raise ValueError("Set modbus_host to the SmartLogger's IP address or hostname.")
@@ -40,7 +43,7 @@ def load_options() -> tuple[str, int, int]:
         raise ValueError("modbus_port must be between 1 and 65535.")
     if not isinstance(scan_interval, int) or not 5 <= scan_interval <= 3600:
         raise ValueError("scan_interval must be between 5 and 3600 seconds.")
-    return host.strip(), port, scan_interval
+    return host.strip(), port, slave_id, scan_interval
 
 
 def stable_key(host: str) -> str:
@@ -49,14 +52,7 @@ def stable_key(host: str) -> str:
 
 
 def mqtt_client(host: str) -> mqtt.Client:
-    broker_host = os.getenv("MQTT_HOST")
-    if not broker_host:
-        raise RuntimeError("MQTT_HOST was not provided by the Home Assistant MQTT service.")
-
-    username = os.getenv("MQTT_USERNAME")
-    password = os.getenv("MQTT_PASSWORD")
-    if bool(username) != bool(password):
-        raise ValueError("The MQTT service must provide both MQTT_USERNAME and MQTT_PASSWORD.")
+    config = get_mqtt_service_config()
 
     key = stable_key(host)
     client = mqtt.Client(
@@ -64,8 +60,10 @@ def mqtt_client(host: str) -> mqtt.Client:
         client_id=f"smartlogger_{key}",
         protocol=mqtt.MQTTv311,
     )
-    if username:
-        client.username_pw_set(username, password)
+    if config.username:
+        client.username_pw_set(config.username, config.password)
+    if config.ssl:
+        client.tls_set()
 
     availability_topic = f"smartlogger/{key}/availability"
     client.will_set(availability_topic, payload="offline", qos=1, retain=True)
@@ -78,7 +76,7 @@ def mqtt_client(host: str) -> mqtt.Client:
             reason,
         )
     )
-    client.connect_async(broker_host, int(os.getenv("MQTT_PORT", "1883")), keepalive=60)
+    client.connect_async(config.host, config.port, keepalive=60)
     client.reconnect_delay_set(min_delay=1, max_delay=30)
     client.loop_start()
     return client
@@ -156,7 +154,7 @@ def publish_discovery(
         client.publish(topic, json.dumps(entity["config"]), qos=1, retain=True)
 
 
-def read_registers(host: str, port: int) -> dict[int, int]:
+def read_registers(host: str, port: int, slave_id: int) -> dict[int, int]:
     client = ModbusTcpClient(host, port=port, timeout=MODBUS_TIMEOUT)
     try:
         if not client.connect():
@@ -167,7 +165,7 @@ def read_registers(host: str, port: int) -> dict[int, int]:
             response = client.read_holding_registers(
                 address=address,
                 count=count,
-                device_id=0,
+                device_id=slave_id,
             )
             if response.isError():
                 raise ModbusException(
@@ -231,7 +229,7 @@ def run() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    host, port, scan_interval = load_options()
+    host, port, slave_id, scan_interval = load_options()
     key = stable_key(host)
     availability_topic = f"smartlogger/{key}/availability"
     client = mqtt_client(host)
@@ -242,9 +240,14 @@ def run() -> None:
                 time.sleep(1)
                 continue
             try:
-                values = read_registers(host, port)
+                values = read_registers(host, port, slave_id)
                 publish_states(client, host, key, availability_topic, values)
-                LOGGER.debug("Published telemetry from %s:%s", host, port)
+                LOGGER.debug(
+                    "Published telemetry from %s:%s (Modbus slave ID %s)",
+                    host,
+                    port,
+                    slave_id,
+                )
             except (OSError, TimeoutError, ModbusException, ValueError) as error:
                 LOGGER.warning("SmartLogger read failed: %s", error)
                 client.publish(availability_topic, payload="offline", qos=1, retain=True)
