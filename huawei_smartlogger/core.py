@@ -30,6 +30,33 @@ class AlarmBit:
 
 REGISTERS = (
     Register(
+        "active_adjustment_volatile",
+        "Active power adjustment (volatile)",
+        40420,
+        "u32",
+        10,
+        "kW",
+        "power",
+    ),
+    Register(
+        "reactive_adjustment",
+        "Reactive power adjustment",
+        40422,
+        "i32",
+        10,
+        "kvar",
+        "reactive_power",
+    ),
+    Register(
+        "active_adjustment_failsafe",
+        "Active power adjustment (failsafe)",
+        40424,
+        "u32",
+        10,
+        "kW",
+        "power",
+    ),
+    Register(
         "input_power",
         "Input power",
         40521,

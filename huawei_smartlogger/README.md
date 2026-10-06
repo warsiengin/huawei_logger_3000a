@@ -23,8 +23,16 @@ and protocol defaults are based on
 
 ## Published entities
 
+Every register row in the guide's SCADA telemetry matrix is exposed as an MQTT
+Discovery sensor, including the three power-adjustment registers. These
+adjustment registers are read for monitoring only; the add-on never writes to
+the logger.
+
 | Entity | Register | Type | Gain | Unit |
 | --- | ---: | --- | ---: | --- |
+| Active power adjustment (volatile) | 40420 | U32 | 10 | kW |
+| Reactive power adjustment | 40422 | I32 | 10 | kvar |
+| Active power adjustment (failsafe) | 40424 | U32 | 10 | kW |
 | Input power | 40521 | U32 | 1000 | kW |
 | Active power | 40525 | I32 | 1000 | kW |
 | Power factor | 40532 | I16 | 1000 | |
@@ -53,6 +61,9 @@ conflict (alarm 2 bit 3). Plant status values follow the guide: 1 unlimited,
 - The numeric addresses are used exactly as printed in the supplied guide.
   Confirm that your SmartLogger firmware uses this address convention before
   deploying.
+- The guide also mentions address `40697` in a programming note but does not
+  specify its quantity, data type, or gain in the telemetry matrix. It is not
+  polled, to avoid guessing how to decode it.
 - MQTT availability is marked offline on read errors and online after a
   successful poll. State and availability topics use
   `<mqtt_topic_prefix>/<instance_id>/...`; Discovery configuration uses the

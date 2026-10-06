@@ -31,6 +31,7 @@ class RegisterDecodingTests(unittest.TestCase):
         self.assertEqual(
             register_groups(),
             [
+                (40420, 6),
                 (40521, 2),
                 (40525, 2),
                 (40532, 1),
@@ -39,6 +40,26 @@ class RegisterDecodingTests(unittest.TestCase):
                 (50000, 2),
             ],
         )
+
+    def test_register_map_includes_every_telemetry_matrix_row(self) -> None:
+        self.assertEqual(
+            {register.address for register in REGISTERS},
+            {
+                40420,
+                40422,
+                40424,
+                40521,
+                40525,
+                40532,
+                40543,
+                40544,
+                40560,
+                40562,
+                50000,
+                50001,
+            },
+        )
+        self.assertEqual(len(REGISTERS), 12)
 
     def test_alarm_bit_is_read_from_its_documented_register(self) -> None:
         alarm = next(item for item in ALARMS if item.key == "mcb_disconnect")
